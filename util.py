@@ -20,8 +20,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.lines as mlines
 from matplotlib.backends.backend_pdf import PdfPages
+ResultsDir = '/home/dwyrick/projects/jumping_behavior/results'
 
-def params_to_dict(params, HMM_INPUTS=False, HMM_RECURRENCE=False, AR_INPUTS=False, ROBUST=False):
+def params_to_dict(params, opt, AR_INPUTS=False):
     """
     Intended usage: 
     When setting up model, define
@@ -35,22 +36,25 @@ def params_to_dict(params, HMM_INPUTS=False, HMM_RECURRENCE=False, AR_INPUTS=Fal
     
     trans = {}
     trans['log_Ps'] = params[1][0]
-#     if HMM_INPUTS:
-#         trans['Ws'] = params[1][1]
-#     if HMM_RECURRENCE:
-#         trans['Rs'] = params[1][1]
+
+    if opt['transitions'] == 'inputdriven':
+        trans['Ws'] = params[1][1]
+    elif opt['transitions'] == 'recurrent':
+        trans['Rs'] = params[1][1]
     
     obs = {}    
-    obs['mus'] = params[2][0]
-    obs['sqrt_Sigmas'] = params[2][1]
-
+    obs['As'] = params[2][0]
+    obs['bs'] = params[2][1]
+    obs['ABs'] = np.concatenate((obs['As'],obs['bs'][:,:,None]),axis=-1)
     
-#     if AR_INPUTS:    
-#         obs['Vs'] = params[2][2]
+    obs['sqrt_Sigmas'] = params[2][3]
     
-#     if ROBUST:    
-#         obs['log_nus'] = params[2][4]
-#         obs['nus'] = np.exp(params[2][4])
+    if AR_INPUTS:    
+        obs['Vs'] = params[2][2]
+    
+    if opt['observations'] == 'robust_autoregressive':  
+        obs['log_nus'] = params[2][4]
+        obs['nus'] = np.exp(params[2][4])
     
     out = {}
     out['init_state_distn'] = init
@@ -81,13 +85,13 @@ def dict_to_params(par_dict):
                          
     return params
 
-def make_base_dir(model_type, mouseID, condition, stimuli, SAVE=True):
+def make_base_dir(model_type, mouseID, SAVE=True):
     #Create base folder for results    
     timestr = time.strftime('%Y-%m-%d_%H%M')
-    fit_str = '-'.join((mouseID,condition,stimuli,timestr))
+    fit_str = '-'.join(('Side_NEE',mouseID,timestr))
     
     #Create Save Directory
-    SaveDirRoot = os.path.join(AuxDataDir,'SSM',model_type,fit_str)
+    SaveDirRoot = os.path.join(ResultsDir,model_type,fit_str)
     
     if not os.path.isdir(SaveDirRoot) and SAVE:
         os.makedirs(SaveDirRoot)
@@ -106,7 +110,7 @@ def make_sub_dir(K, opt, i_fold, SAVE=True):
         os.makedirs(SaveDir)   
     
     #e.g.: 'ARHMM-K_07-Robust~Sticky~InputHMM_101'
-    fname_sffx = '{}-K_{:02d}'.format(opt['model_type'],K)
+    fname_sffx = '{}-{}-HMM-K_{:02d}'.format(opt['transitions'],opt['observations'],K)
 
     return SaveDir, fname_sffx
 
@@ -178,32 +182,31 @@ def sort_states_by_usage(state_usage, trMAPs, trPosteriors):
 def get_state_durations(trMAPs, trMasks, K, interval=None):
     ##===== calculate state durations & usages in a given interval =====##     
     # K+1 too, b/c measuring NaN state durations too.
+    state_startend_list = [[[] for s in range(K+1)] for i in range(len(trMAPs))]
     state_duration_list = [[[] for s in range(K+1)] for i in range(len(trMAPs))]
-    state_usage_list = [[[] for s in range(K+1)] for i in range(len(trMAPs))] 
     state_usage_raw =  np.zeros(K+1)
     
     #Loop over trials
     for tr, (MAP,mask) in enumerate(zip(trMAPs,trMasks)):
         #Apply threshold mask
-#         MAP = np.squeeze(trMAPs[interval]).copy()
-#         mask = np.squeeze(trMasks[interval])
-        MAP[~mask] = -1 #instead of np.nan
+        MAPcp = MAP.copy()
+        MAPcp[~mask] = -1
 #         pdb.set_trace()
         
         #Loop over states and nan-states
         for state in range(-1,K):
-            state_1hot = np.concatenate(([0],(np.array(MAP) == state).astype(int),[0]))
+            state_1hot = np.concatenate(([0],(np.array(MAPcp) == state).astype(int),[0]))
             state_trans = np.diff(state_1hot)
             state_ends = np.nonzero(state_trans == -1)[0]
             state_starts = np.nonzero(state_trans == +1)[0]
             state_durations = state_ends - state_starts
             state_duration_list[tr][state] = state_durations
-            state_usage_list[tr][state] = np.sum(state_durations)
+            state_startend_list[tr][state] = np.vstack((state_starts,state_ends)).T
             state_usage_raw[state] += np.sum(state_durations)
             
     #Normalize State Usage
     state_usage = state_usage_raw/np.sum(state_usage_raw) 
-    return (state_duration_list, state_usage_list, state_usage)
+    return (state_duration_list, state_startend_list, state_usage)
 
 # Define randomized SVD function
 def rSVD(X,r,q,p):
