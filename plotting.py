@@ -24,6 +24,8 @@ import matplotlib.colors as colors
 
 #User
 import util
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 color_names=['windows blue','red','amber','faded green','dusty purple','orange','steel blue','pink','mint',
              'clay','light cyan','forest green','pastel purple','salmon','dark brown','lavender','pale green',
@@ -139,7 +141,25 @@ def plot_MAP_estimates(trMAPs,trMASKs,used_states,trsum,session=1,apply_mask=Tru
 
     # Close PDF file
     # pdfdoc.close()
+def plot_state_usage(state_usage,K,ax=None,pdfdoc=None):
+    ##===== Plot state usage =====## 
+    if ax is None:
+        fs=(8,8) if K < 11 else (16,8)
+        fig,ax = plt.subplots(figsize=fs)
+        plt.suptitle('State Usage for K={}'.format(K))
 
+    sns.barplot(np.arange(K+1),state_usage*100,palette=color_palette,ax=ax)
+    ax.set_xlabel('State')
+    ax.set_ylabel('Usage',fontsize=12)
+
+    tmp = [str(i) for i in np.arange(K)]
+    tmp.append('NaN')
+    ax.set_xticklabels(tmp)
+    
+    if pdfdoc is not None:
+        pdfdoc.savefig(fig)
+        plt.close(fig)
+    
 def plot_state_durations2(state_duration_list, state_usage, K, 
                          bSize=1/60,
                          SAVEFIG=False,
@@ -180,17 +200,7 @@ def plot_state_durations2(state_duration_list, state_usage, K,
             plt.close(fig)
 
     ##===== Plot state usage =====## 
-    fs=(8,8) if K < 11 else (16,8)
-    fig,ax = plt.subplots(figsize=fs)
-    plt.suptitle('State Usage for K={}'.format(K))
-
-    sns.barplot(np.arange(K+1),state_usage*100,palette=color_palette,ax=ax)
-    ax.set_xlabel('State')
-    ax.set_ylabel('Usage',fontsize=12)
-
-    tmp = [str(i) for i in np.arange(K)]
-    tmp.append('NaN')
-    ax.set_xticklabels(tmp)
+    plot_state_usage(state_usage,K,pdfdoc=pdfdoc)
     
     if SAVEFIG:
         pdfdoc.savefig(fig)
@@ -465,6 +475,7 @@ def plot_example_trajectories(state_duration_list,
 
             #Get data
             if simulated:
+                nT = 75
                 iS = 0; iE=nT-1
                 x0 = data_list[iTrial][iS,:]
                 data = np.zeros((nT,dObs))

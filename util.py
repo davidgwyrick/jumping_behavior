@@ -22,6 +22,41 @@ import matplotlib.lines as mlines
 from matplotlib.backends.backend_pdf import PdfPages
 ResultsDir = '/home/dwyrick/projects/jumping_behavior/results'
 
+def read_data(fpath='./data/jumping_data_102220.h5'):
+    
+    ##===== Read in Data =====##
+    data_df = pd.read_hdf(fpath)
+    nTrials = len(data_df)
+    data_df.head()
+
+    #DLC tracking confidence threshold at which to mask out data
+    confidence_threshold = 0.8
+
+    #Loop over trials and reformat data for ARHMM
+    data_list = []; mask_list = []
+    for iTrial in range(nTrials):
+        #Get coordinates of Take-Off platform
+        xc = np.nanmean(data_df.loc[iTrial]['Side TakeFL x'])
+        yc = np.nanmean(data_df.loc[iTrial]['Side TakeFL y'])
+
+        xy_list = []; ll_list = []
+        for ii, ptstr in enumerate(['Nose','LEye','LEar']):
+            x = data_df.loc[iTrial]['Side {} x'.format(ptstr)]
+            y = data_df.loc[iTrial]['Side {} y'.format(ptstr)]
+            llhood = data_df.loc[iTrial]['Side {} likelihood'.format(ptstr)]
+
+            #Coordinates relative to take-off platform
+            xy_list.append((x-xc,y-yc))
+
+            #Create mask for points that have a confidence lower than the given threshold
+            mask = llhood > confidence_threshold
+            ll_list.append((mask,mask))
+
+        tmp = np.vstack(xy_list).T; data_list.append(tmp[2:-2,:])
+        tmp = np.vstack(ll_list).T; mask_list.append(tmp[2:-2,:])
+        
+    return data_list, mask_list, data_df
+    
 def params_to_dict(params, opt, AR_INPUTS=False):
     """
     Intended usage: 
@@ -99,18 +134,19 @@ def make_base_dir(model_type, mouseID, SAVE=True):
     return SaveDirRoot
 
 ## Make sub-directories for xval under the save directory root
-def make_sub_dir(K, opt, i_fold, SAVE=True):   
+def make_sub_dir(K, opt,kappa, i_fold, SAVE=True):   
     #e.g.: 'SaveDirRoot/K_05/'
     if i_fold == -1:
-        SaveDir = os.path.join(opt['SaveDirRoot'], 'K_{:02d}'.format(K))
+        SaveDir = os.path.join(opt['SaveDirRoot'], 'Kappa_{:.0e}'.format(kappa))
     else:
-        SaveDir = os.path.join(opt['SaveDirRoot'], 'K_{:02d}'.format(K),'kFold_{:02d}'.format(i_fold))
+        SaveDir = os.path.join(opt['SaveDirRoot'], 'Kappa_{:.0e}'.format(kappa),'kFold_{:02d}'.format(i_fold))
     
     if not os.path.isdir(SaveDir) and SAVE:
         os.makedirs(SaveDir)   
-    
+
+    print('Creating Directory: {}'.format(SaveDir))
     #e.g.: 'ARHMM-K_07-Robust~Sticky~InputHMM_101'
-    fname_sffx = '{}-{}-HMM-K_{:02d}'.format(opt['transitions'],opt['observations'],K)
+    fname_sffx = '{}-{}-HMM-K_{:02d}_Kappa_{:.0e}'.format(opt['transitions'],opt['observations'],K,kappa)
 
     return SaveDir, fname_sffx
 
@@ -179,17 +215,24 @@ def sort_states_by_usage(state_usage, trMAPs, trPosteriors):
     return state_usage_sorted, trMAPs_sorted, trPosteriors_sorted, perm
 
 
-def get_state_durations(trMAPs, trMasks, K, interval=None):
-    ##===== calculate state durations & usages in a given interval =====##     
+def get_state_durations(trMAPs, trMasks, K, trial_indices=None):
+    ##===== calculate state durations & usages in a given interval =====##  
+    if trial_indices is None:
+        nTrials = len(trMAPs)
+        trial_indices = np.arange(0,nTrials)
+    else:
+        nTrials = len(trial_indices)
+        
     # K+1 too, b/c measuring NaN state durations too.
-    state_startend_list = [[[] for s in range(K+1)] for i in range(len(trMAPs))]
-    state_duration_list = [[[] for s in range(K+1)] for i in range(len(trMAPs))]
+    state_startend_list = [[[] for s in range(K+1)] for ii in range(nTrials)]
+    state_duration_list = [[[] for s in range(K+1)] for ii in range(nTrials)]
     state_usage_raw =  np.zeros(K+1)
     
     #Loop over trials
-    for tr, (MAP,mask) in enumerate(zip(trMAPs,trMasks)):
+    for tr, iTrial in enumerate(trial_indices):
         #Apply threshold mask
-        MAPcp = MAP.copy()
+        MAPcp = trMAPs[iTrial].copy()
+        mask = trMasks[iTrial]
         MAPcp[~mask] = -1
 #         pdb.set_trace()
         
@@ -207,6 +250,30 @@ def get_state_durations(trMAPs, trMasks, K, interval=None):
     #Normalize State Usage
     state_usage = state_usage_raw/np.sum(state_usage_raw) 
     return (state_duration_list, state_startend_list, state_usage)
+
+def get_transition_count_matrices(trMAPs, trMasks, K):
+    ## Create 'Transition' count matrix for each trial from sparse MAP state sequence
+    TCMs = np.zeros((len(trMAPs),K,K))
+   
+    #Loop over trials
+    for iTrial, (map_seq,mask) in enumerate(zip(trMAPs,trMasks)):
+        #Apply threshold mask
+        MAP = np.squeeze(map_seq).copy()
+        MAP[~mask] = -1 #instead of np.nan
+        
+        #Lets drop all of the non states for easy sorting
+        #Shorted MAP state sequence
+        sMAP = [int(s) for s in MAP if s != -1]
+        
+        #Count 'state transitons' and fill matrix
+        prev_state = sMAP[0]
+        for iT,state in enumerate(sMAP):
+            TCMs[iTrial,prev_state,state]+=1
+            prev_state = state
+
+        TCMs[iTrial] = TCMs[iTrial]/np.sum(TCMs[iTrial])
+        
+    return TCMs
 
 # Define randomized SVD function
 def rSVD(X,r,q,p):
