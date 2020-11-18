@@ -120,13 +120,15 @@ def dict_to_params(par_dict):
                          
     return params
 
-def make_base_dir(model_type, mouseID, SAVE=True):
+def make_base_dir(opt, SAVE=True):
     #Create base folder for results    
     timestr = time.strftime('%Y-%m-%d_%H%M')
-    fit_str = '-'.join(('Side_NEE',mouseID,timestr))
+
+#     fit_str = '{}-ARHMM_lag-{}_K-{}_dsf-{}_{}'.format(opt['transitions'],opt['AR_lags'],opt['K'],opt['downsample_factor'],timestr)
+    fit_str = '{}-ARHMM_lag-{}_dsf-{}_kappa-{:.0e}_{}'.format(opt['transitions'],opt['AR_lags'],opt['downsample_factor'],opt['kappa'],timestr)
     
     #Create Save Directory
-    SaveDirRoot = os.path.join(ResultsDir,model_type,fit_str)
+    SaveDirRoot = os.path.join(ResultsDir,fit_str)
     
     if not os.path.isdir(SaveDirRoot) and SAVE:
         os.makedirs(SaveDirRoot)
@@ -134,20 +136,25 @@ def make_base_dir(model_type, mouseID, SAVE=True):
     return SaveDirRoot
 
 ## Make sub-directories for xval under the save directory root
-def make_sub_dir(K, opt,kappa, i_fold, SAVE=True):   
+def make_sub_dir(K, opt, kappa, i_fold, SAVE=True):   
     #e.g.: 'SaveDirRoot/K_05/'
     if i_fold == -1:
-        SaveDir = os.path.join(opt['SaveDirRoot'], 'Kappa_{:.0e}'.format(kappa))
+        SaveDir = os.path.join(opt['SaveDirRoot'], 'K-{:02d}'.format(K))
+#         SaveDir = os.path.join(opt['SaveDirRoot'], 'Kappa-{:.0e}'.format(kappa))
     else:
-        SaveDir = os.path.join(opt['SaveDirRoot'], 'Kappa_{:.0e}'.format(kappa),'kFold_{:02d}'.format(i_fold))
-    
+        SaveDir = os.path.join(opt['SaveDirRoot'], 'K-{:02d}'.format(K),'kFold_{:02d}'.format(i_fold))
+#         SaveDir = os.path.join(opt['SaveDirRoot'], 'Kappa-{:.0e}'.format(kappa),'kFold_{:02d}'.format(i_fold))
+             
     if not os.path.isdir(SaveDir) and SAVE:
         os.makedirs(SaveDir)   
 
     print('Creating Directory: {}'.format(SaveDir))
     #e.g.: 'ARHMM-K_07-Robust~Sticky~InputHMM_101'
-    fname_sffx = '{}-{}-HMM-K_{:02d}_Kappa_{:.0e}'.format(opt['transitions'],opt['observations'],K,kappa)
-
+#     fname_sffx = '{}-ARHMM_lag-{}_K-{:02d}_Kappa-{:.0e}'.format(opt['transitions'],opt['AR_lags'],K,kappa)
+    if opt['transitions'] == 'sticky':
+        fname_sffx = 'sARHMM_lag-{}_K-{:02d}_dsf-{}_Kappa-{:.0e}'.format(opt['AR_lags'],K,opt['downsample_factor'],kappa)
+    else:
+        fname_sffx = 'ARHMM_lag-{}_K-{:02d}_dsf-{}'.format(opt['AR_lags'],K,opt['downsample_factor'])
     return SaveDir, fname_sffx
 
 #Progress bar copied from https://github.com/mattjj/pyhsmm
@@ -195,6 +202,19 @@ def sec2str(seconds):
 
 
 ##===== Utilty functions to interface with scott lindermans SSM code =====##
+
+def get_hmm_latents(hmm, data_list):
+    #Loop over trials and get the maximum a posteriori probability estimate of the latent states
+    trMAPs = []; trPosteriors = []; trMasks = []
+
+    for data in data_list:
+        expected_states, expected_joints, log_likes = hmm.expected_states(data)
+
+        trMAPs.append(np.argmax(expected_states,axis=1))
+        trPosteriors.append(expected_states)
+        trMasks.append(np.max(expected_states,axis=1) > 0.75)
+    return trMAPs, trPosteriors, trMasks
+    
 def invert_perm(perm):
     inverse = np.zeros(len(perm),dtype=int)
     for i, p in enumerate(perm):
@@ -249,9 +269,18 @@ def get_state_durations(trMAPs, trMasks, K, trial_indices=None):
             
     #Normalize State Usage
     state_usage = state_usage_raw/np.sum(state_usage_raw) 
-    return (state_duration_list, state_startend_list, state_usage)
+    
+    #Calculate mean state duration for each state
+    mean_state_durations = [[] for s in range(K+1)]
+    for state in range(-1,K):
+        s_dur = []
+        for iTrial in range(nTrials):
+            s_dur.extend(state_duration_list[iTrial][state])
+        mean_state_durations[state] = np.mean(s_dur)
 
-def get_transition_count_matrices(trMAPs, trMasks, K):
+    return (state_duration_list, state_startend_list, mean_state_durations, state_usage)
+
+def get_transition_count_matrices(trMAPs, trMasks, K, normalize=True):
     ## Create 'Transition' count matrix for each trial from sparse MAP state sequence
     TCMs = np.zeros((len(trMAPs),K,K))
    
@@ -261,6 +290,9 @@ def get_transition_count_matrices(trMAPs, trMasks, K):
         MAP = np.squeeze(map_seq).copy()
         MAP[~mask] = -1 #instead of np.nan
         
+        if all(~mask):
+            continue
+            
         #Lets drop all of the non states for easy sorting
         #Shorted MAP state sequence
         sMAP = [int(s) for s in MAP if s != -1]
@@ -271,7 +303,8 @@ def get_transition_count_matrices(trMAPs, trMasks, K):
             TCMs[iTrial,prev_state,state]+=1
             prev_state = state
 
-        TCMs[iTrial] = TCMs[iTrial]/np.sum(TCMs[iTrial])
+        if normalize:
+            TCMs[iTrial] = TCMs[iTrial]/np.sum(TCMs[iTrial])
         
     return TCMs
 

@@ -37,7 +37,8 @@ behav_dict = {-1:'ambiguous', 0:'rest',1:'running'}
 RootDataDir = '/home/dwyrick/projects/jumping_behavior/data'
 ResultsDir = '/home/dwyrick/projects/jumping_behavior/results'
 
-
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 ##===== ============================ =====##
 ##===== Parse Command Line Arguments =====##
 parser = argparse.ArgumentParser(description='HMM for jumping data')
@@ -48,11 +49,13 @@ parser.add_argument('--save',type=bool, default=1,
 ##===== Data Options =====##
 parser.add_argument('--mID',type=str, default='all_mice',
                     help='mouse to fit model to')
+parser.add_argument('--downsample_factor',type=int, default=2,
+                    help='Downsample Data')
 
 ##===== Model Type =====##
 parser.add_argument('--model_type', type=str, default='ARHMM',
                     help='ARHMM or SLDS')
-parser.add_argument('--transitions', type=str, default='recurrent',
+parser.add_argument('--transitions', type=str, default='sticky',
                     help='standard or recurrent or sticky or inputdriven')
 parser.add_argument('--observations', type=str, default='autoregressive',
                     help='autoregressive or robust_autoregressive or diagonal_ar or diagonal_robust_ar')
@@ -60,24 +63,26 @@ parser.add_argument('--inputdriven', type=bool, default=0,
                     help='HMM transitions dependent on some input in addition to previous HMM state')
 
 ##===== Model Parameters =====##
-parser.add_argument('--kappa', type=float, default=1e5,
+parser.add_argument('--Kmin', type=int, default=6,
+                    help='minimum number of HMM states')
+parser.add_argument('--Kmax', type=int, default=16,
+                    help='maximum number of HMM states')
+parser.add_argument('--kappa', type=float, default=1e7,
                     help='sticky arhmm kappa')
-parser.add_argument('--AR_lags', type=str, default=1,
+parser.add_argument('--AR_lags', type=int, default=1,
                     help='Autoregressive lags')
 parser.add_argument('--MAP_threshold', type=float, default=0.75,
                     help='MAP threshold')
-
-##===== Run Options =====##
-parser.add_argument('--Kmin', type=int, default=4,
-                    help='minimum number of HMM states')
-parser.add_argument('--Kmax', type=int, default=24,
-                    help='maximum number of HMM states')
-parser.add_argument('--kXval', type=int, default=5,
-                    help='number of kfold')
 parser.add_argument('--EM_tolerance', type=float, default=1e-6,
                     help='SSM EM algorithm tolerance')
 parser.add_argument('--EM_iters', type=int, default=200,
                     help='EM Iterations')
+
+##===== Run Options =====##
+parser.add_argument('--xval_type', type=str, default='K',
+                    help='What is the model cross-validating over')
+parser.add_argument('--kXval', type=int, default=2,
+                    help='number of kfold; if set to 0, script will loop over Ks and just fit the model to all of the data')
 parser.add_argument('--max_processes', type=int, default=15,
                     help='max # of parallel processes to run')
 args = parser.parse_args()
@@ -86,14 +91,8 @@ args = parser.parse_args()
 def set_arhmm_hyperparams(opt,K):
     
     Mobs = 0
-    
     #Autoregressive keyword arguments
-    ar_kwargs = dict(
-            # l2_penalty_A= args_dic['l2_penalty_A'],
-            # l2_penalty_b= args_dic['l2_penalty_b'],
-            # l2_penalty_V= args_dic['l2_penalty_V'],
-            lags = opt['AR_lags']
-            )
+    ar_kwargs = dict(lags = opt['AR_lags'])
     
     #HMM Transition parameters 
     if opt['transitions'] == 'sticky':
@@ -150,10 +149,10 @@ def get_state_sequence(hmm, data_test, opt, inputs=None):
     
     return trMAPs, trPosteriors, trMasks, state_usage, ll_heldout, param_dict
     
-def fit_ssm_get_llhood(data_list, K, opt, train_inds=None, test_inds=None, i_fold=-1):
+def fit_ssm_get_llhood(data_list, K, opt, kappa=1E2, train_inds=None, test_inds=None, i_fold=-1):
     #Go!
     startTime = time.time()
-    
+    opt['K'] = K
     nTrials = len(data_list)
     #Separate the data into a training and test set based on the indices given
     if train_inds is not None and test_inds is not None:
@@ -176,11 +175,12 @@ def fit_ssm_get_llhood(data_list, K, opt, train_inds=None, test_inds=None, i_fol
             )
     
     #HMM Transition parameters 
+    trans_kwargs = {}
     if opt['transitions'] == 'sticky':
         # alpha= args_dic['alpha'],
-        trans_kwargs['kappa'] = opt['kappa']
-    else:
-        trans_kwargs = {}
+        trans_kwargs['kappa'] = kappa
+        opt['kappa'] = kappa
+        print('kappa: {:.0e}'.format(kappa))
         
     #Not implemented yet
     if opt['transitions'] == 'inputdriven':
@@ -221,48 +221,82 @@ def fit_ssm_get_llhood(data_list, K, opt, train_inds=None, test_inds=None, i_fol
     
     ##===== Save & Plot =====##
     #Create subdirectory under base directory for kfold
-    SaveDir, fname_sffx = util.make_sub_dir(K, opt, i_fold)
+    SaveDir, fname_sffx = util.make_sub_dir(K, opt, kappa, i_fold)
     
     #Stop time
     RunTime = time.perf_counter() - startTime 
 
+    print('Saving {} kfold'.format(i_fold))
     ## Save log-likelihood per kfold fit, as well as fit model parameters
     ioh5.save(os.path.join(SaveDir, 'fit_parameters-{}.h5'.format(fname_sffx)),
                     {'ll_heldout':llhood_tuple[0], 'll_heldout_perstep':llhood_tuple[1],'tTest': tTest, 
                     'll_training':llhood_tuple[2], 'll_training_perstep':llhood_tuple[3],'tTrain': tTrain, 
                     'state_usage':state_usage, 'arhmm_params' : params_dict,'hyperparams': opt, 
-                    'model_convergence': model_convergence, 'RunTime': RunTime})  
+                    'model_convergence': model_convergence, 'RunTime': RunTime}) 
     
-    ##===== Save and plot for full fit =====##
+    ## Calculate state duration and state usage 
+    state_duration_list, state_startend_list, mean_state_durations, state_usage = util.get_state_durations(trMAPs, trMasks, K)
+        
+    ## Plot example trajectories of actual trajectories for each state
+    usrplt.plot_example_trajectories(state_duration_list, state_startend_list, mean_state_durations, data_test, arhmm, dsf=opt['downsample_factor'],
+                                     longest=True, SAVEFIG=True,PlotDir=SaveDir,fname='state-trajectories_data_longest-trials_{}.pdf'.format(fname_sffx))
+
+    ## Plot example trajectories of actual trajectories for each state
+    usrplt.plot_example_trajectories(state_duration_list, state_startend_list, mean_state_durations, data_test, arhmm, dsf=opt['downsample_factor'],
+                                     longest=False, SAVEFIG=True,PlotDir=SaveDir,fname='state-trajectories_data_varying-length_{}.pdf'.format(fname_sffx))
+
+    ## Plot example trajectories simulated from the model for each state
+    usrplt.plot_example_trajectories(state_duration_list, state_startend_list, mean_state_durations, data_test, arhmm, dsf=opt['downsample_factor'],
+                                     simulated=True, SAVEFIG=True,PlotDir=SaveDir,fname='state-trajectories_simulated_longest-trials_{}.pdf'.format(fname_sffx))
+
+    ## Plot example trajectories simulated from the model for each state
+    usrplt.plot_example_trajectories(state_duration_list, state_startend_list, mean_state_durations, data_test, arhmm, dsf=opt['downsample_factor'],
+                                     longest=False, simulated=True, SAVEFIG=True,PlotDir=SaveDir,fname='state-trajectories_simulated_varying-length_{}.pdf'.format(fname_sffx))
+        
+    ## Plot example trajectories per trial
+    usrplt.plot_example_state_sequences(trMAPs, trMasks, data_test, K, nTrials_plot = 100,SAVEFIG=True,PlotDir=SaveDir,
+                                        fname='state-sequences_{}.pdf'.format(fname_sffx))
+    ##===== For full fit =====##
     if i_fold == -1:
         
         ## Save state sequences for full fit
-        ioh5.save(os.path.join(SaveDir, 'MAP_seqs-{}.h5'.format(fname_sffx)), 
+        ioh5.save(os.path.join(SaveDir, 'MAP_seqs_all-trials_{}.h5'.format(fname_sffx)), 
           {'trMAPs':trMAPs, 'trPosteriors':trPosteriors,'trMasks':trMasks, 
            'arhmm_params' : params_dict,'state_usage':state_usage, 
            'hyperparams' : opt})
         
         ## Calculate & plot state duration and state usage 
-        state_duration_list, state_startend_list, state_usage = util.get_state_durations(trMAPs, trMasks, K)
+#         state_duration_list, state_startend_list, mean_state_durations, state_usage = util.get_state_durations(trMAPs, trMasks, K)
         usrplt.plot_state_durations2(state_duration_list,state_usage, K,
                                     SAVEFIG=True,PlotDir=SaveDir,fname='state-durations_{}.pdf'.format(fname_sffx))
         
         #Plot dynamics of latent states
-        usrplt.plot_dynamics_2d(arhmm,SAVEFIG=True,PlotDir=SaveDir,fname='AR-streamplots_{}.pdf'.format(fname_sffx))
+        if opt['AR_lags'] == 1:
+            usrplt.plot_dynamics_2d(arhmm,SAVEFIG=True,PlotDir=SaveDir,fname='AR-streamplots_{}.pdf'.format(fname_sffx))
         
         ## Plot the actual AR matrices, with their corresponding fixed point
-        usrplt.plot_AR_matrices(arhmm,SAVEFIG=True,PlotDir=SaveDir,fname='AR-matrices_{}.pdf'.format(fname_sffx))
+        usrplt.plot_AR_matrices(arhmm, dsf=opt['downsample_factor'],SAVEFIG=True,PlotDir=SaveDir,fname='AR-matrices_{}.pdf'.format(fname_sffx))
         
-        ## Plot example trajectories of actual trajectories for each state
-        usrplt.plot_example_trajectories(state_duration_list,state_startend_list,data_list, arhmm,
-                                        SAVEFIG=True,PlotDir=SaveDir,fname='state-trajectories_data_{}.pdf'.format(fname_sffx))
-        
-        ## Plot example trajectories simulated from the model for each state
-        usrplt.plot_example_trajectories(state_duration_list,state_startend_list,data_list, arhmm, simulated=True,
-                                        SAVEFIG=True,PlotDir=SaveDir,fname='state-trajectories_simulated_{}.pdf'.format(fname_sffx))
+        #Calculate empirical transition count matrices
+        TCMs = util.get_transition_count_matrices(trMAPs,trMasks,K,normalize=False)
+        TPM = arhmm.transitions.transition_matrix
 
+        #Plot the TCMs per condition / success
+        usrplt.plot_transition_matrices_per_condition(TCMs, data_df, TPM, SAVEFIG=True, PlotDir=SaveDir,
+                                                      fname='transition-count-matrices_all-mice_{}.pdf'.format(fname_sffx))
+
+        #Plot the TCMs per mouse /condition / success 
+        usrplt.plot_transition_matrices_per_mouse(TCMs, data_df, TPM, SAVEFIG=True,PlotDir=SaveDir,
+                                                  fname='transition-count-matrices_per-mouse_{}.pdf'.format(fname_sffx))
     
-    return ll_training_perstep, ll_heldout_perstep, K
+    else:
+        ## Save state sequences for heldout data
+        ioh5.save(os.path.join(SaveDir, 'MAP_seqs_held-out_{}.h5'.format(fname_sffx)), 
+          {'trMAPs':trMAPs, 'trPosteriors':trPosteriors,'trMasks':trMasks, 
+           'arhmm_params' : params_dict,'state_usage':state_usage, 
+           'hyperparams' : opt,'train_inds':train_inds,'test_inds':test_inds})
+        
+    return ll_training_perstep, ll_heldout_perstep, kappa
         
 ##===== ===== =====##
 ##===== Start =====##
@@ -274,7 +308,7 @@ if __name__ == "__main__":
     opt = args.__dict__
      
     #Create base folder for saved results    
-    SaveDirRoot = util.make_base_dir(opt['model_type'],opt['mID'])    
+    SaveDirRoot = util.make_base_dir(opt)    
                 
     #Save script options in JSON file
     opt['SaveDirRoot'] = SaveDirRoot
@@ -289,7 +323,8 @@ if __name__ == "__main__":
     
     #DLC tracking confidence threshold at which to mask out data
     confidence_threshold = 0.8
-
+    
+    dsf = opt['downsample_factor']
     #Loop over trials and reformat data for ARHMM
     data_list = []; mask_list = []
     for iTrial in range(nTrials):
@@ -309,69 +344,71 @@ if __name__ == "__main__":
             #Create mask for points that have a confidence lower than the given threshold
             mask = llhood > confidence_threshold
             ll_list.append((mask,mask))
-
-        tmp = np.vstack(xy_list).T; data_list.append(tmp[2:-2,:])
-        tmp = np.vstack(ll_list).T; mask_list.append(tmp[2:-2,:])
+            
+        #Downsample if required
+        tmp = np.vstack(xy_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[::dsf,:]; data_list.append(tmp2)
+        tmp = np.vstack(ll_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[::dsf,:]; mask_list.append(tmp2)
 
     #Get number of time points and components per experiment
     nT, dObs = data_list[0].shape
     nComponents = dObs; opt['dObs'] = dObs
-
-    ##===== ==================== =====##
+    
     ##===== Perform X-validation =====##
-    k_fold = StratifiedKFold(n_splits=opt['kXval'])
-    #Stratify data per mice and per condition for kfolds
-    include = ['{}_D{}'.format(i,j) for i,j in zip(list(data_df['subject']),list(data_df['distance']))]
-                     
+    #Create kfold object if we
+    if opt['kXval'] > 0:
+        #Stratify data per mice and per condition for kfolds
+        k_fold = StratifiedKFold(n_splits=opt['kXval'])
+        include = ['{}_D{}'.format(i,j) for i,j in zip(list(data_df['subject']),list(data_df['distance']))]
+        process_outputs = []
+
     # Creates parallel processes
     pool = multiprocessing.Pool(processes=opt['max_processes'])
-    
+
     #Preallocate matrix for cross-validation llhood values
-    Ks = np.arange(opt['Kmin'],opt['Kmax']+1,2)
+    Ks = np.arange(opt['Kmin'],opt['Kmax']+1,1)
     ll_heldout = np.zeros((len(Ks),opt['kXval']+1))
     ll_training = np.zeros((len(Ks),opt['kXval']+1))
     model_fullfit = []
-    process_outputs = []
 
     #Loop over number of HMM states
-    for index, K in enumerate(np.arange(opt['Kmin'],opt['Kmax']+1,2)):
+    for index, K in enumerate(Ks):
         print('{} states'.format(K))
+        opt['K'] = K
         #Fit the model to all of the data, and then for each kfold of x-validation
-        model_fullfit.append(pool.apply_async(fit_ssm_get_llhood, args=(data_list,K,opt)))
-#         ll_training_perstep, ll_heldout_perstep, K = fit_ssm_get_llhood(data_list,K,opt)
+        model_fullfit.append(pool.apply_async(fit_ssm_get_llhood, args=(data_list,K,opt,opt['kappa'])))
 
-        #Loop over kfolds
-        kfold_outputs = []
-        for iK, (train_indices, test_indices) in enumerate(k_fold.split(data_list,include)):
-            kfold_outputs.append(pool.apply_async(fit_ssm_get_llhood, args= \
-                                (data_list, K, opt, train_indices, test_indices, iK)))
-        process_outputs.append(kfold_outputs)
-    
-    ##===== =========== =====##
+        if opt['kXval'] > 0:
+            #Loop over kfolds
+            kfold_outputs = []
+            for iK, (train_indices, test_indices) in enumerate(k_fold.split(data_list,include)):
+                print('.',end='')
+                kfold_outputs.append(pool.apply_async(fit_ssm_get_llhood, args= \
+                                    (data_list, K, opt, opt['kappa'], train_indices, test_indices, iK)))
+            process_outputs.append(kfold_outputs)
+
+
     ##===== Get results =====##
-    #Extract log_likelihood results from parallel kfold processing
-    for index, results in enumerate(process_outputs):
-        ll_training[index,:-1] = np.array([iFold.get()[0] for iFold in results])
-        ll_heldout[index,:-1] = np.array([iFold.get()[1] for iFold in results])
-        Ks[index] = results[0].get()[2]
-       
     #For full fit
-    Ks_ff = Ks.copy()
     for index, results in enumerate(model_fullfit):
         ll_training[index,-1] = results.get()[0]
         ll_heldout[index,-1] = results.get()[1]
-        Ks_ff = results.get()[2]
+
+    if opt['kXval'] > 0:
+        #Extract log_likelihood results from parallel kfold processing
+        for index, results in enumerate(process_outputs):
+            ll_training[index,:-1] = np.array([iFold.get()[0] for iFold in results])
+            ll_heldout[index,:-1] = np.array([iFold.get()[1] for iFold in results])
 
     #Close Parallel pool
     pool.close()
-#     pdb.set_trace()
+
     #Total Run Time
     RunTime = time.perf_counter() - startTime   
     opt.update(RunTime = RunTime)
     hrs=int(RunTime//3600); mins=int((RunTime%3600)//60); secs=int(RunTime - hrs*3600 - mins*60)
-    print('\tTotal run time = {:02d}:{:02d}:{:02d} for {} K\'s\n'.format(hrs,mins,secs,opt['Kmax']+1-opt['Kmin']))
+    print('\tTotal run time = {:02d}:{:02d}:{:02d}'.format(hrs,mins,secs))
 
     # Save summary data of all x-validation results 
-    usrplt.plot_xval_lls_vs_K(ll_training, ll_heldout, Ks, opt, SAVEFIG=True)
-    xval_fname = '{}_lls_vs_K_{}to{}'.format(opt['mID'],opt['Kmin'],opt['Kmax'])
-    ioh5.save(os.path.join(opt['SaveDirRoot'], xval_fname+'.h5'), {'ll_heldout':ll_heldout, 'll_training':ll_training,'Ks': Ks,'RunTime':opt['RunTime'], 'kXval':opt['kXval'], 'Kmin':opt['Kmin'], 'Kmax':opt['Kmax']})
+#     usrplt.plot_xval_lls_vs_K(ll_training, ll_heldout, Ks, opt, SAVEFIG=True)
+#         xval_fname = '{}_lls_vs_K_{:.0e}to{:.0e}'.format(opt['mID'],opt['kappa_min'],opt['kappa_max'])
+#     ioh5.save(os.path.join(opt['SaveDirRoot'], xval_fname+'.h5'), {'ll_heldout':ll_heldout, 'll_training':ll_training,'kappas': kappa_return,'RunTime':opt['RunTime'], 'kXval':opt['kXval'], 'kappa_max':opt['kappa_max'], 'kappa_min':opt['kappa_min']})
