@@ -22,7 +22,7 @@ import matplotlib.lines as mlines
 from matplotlib.backends.backend_pdf import PdfPages
 ResultsDir = '/home/dwyrick/projects/jumping_behavior/results'
 
-def read_data(fpath='./data/jumping_data_102220.h5'):
+def read_data(fpath='./data/jumping_data_102220.h5', dsf=1):
     
     ##===== Read in Data =====##
     data_df = pd.read_hdf(fpath)
@@ -52,8 +52,9 @@ def read_data(fpath='./data/jumping_data_102220.h5'):
             mask = llhood > confidence_threshold
             ll_list.append((mask,mask))
 
-        tmp = np.vstack(xy_list).T; data_list.append(tmp[2:-2,:])
-        tmp = np.vstack(ll_list).T; mask_list.append(tmp[2:-2,:])
+        #Downsample if required #data_list_fullres.append(tmp)
+        tmp = np.vstack(xy_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[:-1:dsf,:]; data_list.append(tmp2)
+        tmp = np.vstack(ll_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[:-1:dsf,:]; mask_list.append(tmp2)
         
     return data_list, mask_list, data_df
     
@@ -246,6 +247,7 @@ def get_state_durations(trMAPs, trMasks, K, trial_indices=None):
     # K+1 too, b/c measuring NaN state durations too.
     state_startend_list = [[[] for s in range(K+1)] for ii in range(nTrials)]
     state_duration_list = [[[] for s in range(K+1)] for ii in range(nTrials)]
+    state_usage_pertrial = np.zeros((nTrials,K+1))
     state_usage_raw =  np.zeros(K+1)
     
     #Loop over trials
@@ -264,8 +266,12 @@ def get_state_durations(trMAPs, trMasks, K, trial_indices=None):
             state_starts = np.nonzero(state_trans == +1)[0]
             state_durations = state_ends - state_starts
             state_duration_list[tr][state] = state_durations
+            state_usage_pertrial[tr,state] = np.sum(state_durations)
             state_startend_list[tr][state] = np.vstack((state_starts,state_ends)).T
             state_usage_raw[state] += np.sum(state_durations)
+        
+        #Normalize based on trial length 
+#         state_usage_list[tr,:] = state_usage_list[tr,:]/np.sum(state_usage_list[tr,:])
             
     #Normalize State Usage
     state_usage = state_usage_raw/np.sum(state_usage_raw) 
@@ -278,7 +284,7 @@ def get_state_durations(trMAPs, trMasks, K, trial_indices=None):
             s_dur.extend(state_duration_list[iTrial][state])
         mean_state_durations[state] = np.mean(s_dur)
 
-    return (state_duration_list, state_startend_list, mean_state_durations, state_usage)
+    return (state_duration_list, state_startend_list, mean_state_durations, state_usage_pertrial, state_usage)
 
 def get_transition_count_matrices(trMAPs, trMasks, K, normalize=True):
     ## Create 'Transition' count matrix for each trial from sparse MAP state sequence

@@ -806,3 +806,153 @@ def plot_transition_matrices_per_mouse(TCMs, data_df,
             plt.close(fig)
 
     pdfdoc.close()       
+    
+    
+    
+def plot_state_usage_per_condition(state_usage_pertrial, data_df,
+                                   SAVEFIG=False,
+                                   PlotDir='./plots',
+                                   fname=None):
+    
+    K = state_usage_pertrial.shape[-1] - 1
+    conditions = np.unique(data_df['ocular'])
+    distances = np.unique(data_df['distance'])
+
+    if SAVEFIG:
+        if fname is None:
+            'state-usages-per-condition_K-{}.pdf'.format(K)
+        #Create pdf to save all plots
+        pdfdoc = PdfPages(os.path.join(PlotDir,fname))      
+    
+    #Get trial indices 
+    indy_dict = data_df.groupby(['ocular','distance','success']).indices
+
+    #Loop over each condition
+    for cond in conditions:
+
+        fig, axes = plt.subplots(3,5,figsize=(20,10),sharey=True,gridspec_kw={'width_ratios':[4,4,4,4,4],'wspace':0.5,'hspace':0.5})
+        plt.suptitle('All Mice, {} condition -> State Usage'.format(cond),y=0.95)
+
+        diff_list = []
+        #Loop over each distance
+        for iD,dist in enumerate(distances):
+            tmp_list = []
+
+            #And outcome
+            for success in [0,1]:
+                if (cond,dist,success) not in indy_dict.keys():
+                    ax = axes[success,iD]
+                    ax.set_title('{} / {} / {}'.format(success,dist,len(trial_indices)))
+                    ax.axis('off')
+                    continue
+
+                #Get indices for this unique trial combination
+                trial_indices = indy_dict[(cond,dist,success)]
+
+                #Sum all transitions from all mice
+                su_uniq = np.sum(state_usage_pertrial[trial_indices],axis=0)
+                #Normalize based on # of bins
+                su_uniq = su_uniq/np.sum(su_uniq)
+                #Save to calculate difference
+                tmp_list.append(np.copy(su_uniq))
+
+                #Plot empirical transition matrix
+                ax = axes[success,iD]
+                sns.barplot(np.arange(K+1),su_uniq,palette=color_palette,ax=ax)
+
+                ax.set_title('S:{} / D:{} / N:{}'.format(success,dist,len(trial_indices)))
+                ax.set_xlabel('State j'); ax.set_ylabel('State i')
+
+            if len(tmp_list) < 2:
+                ax = axes[2,iD]
+                ax.axis('off')
+                diff_list.append([])
+                continue
+            else:
+                su_diff = tmp_list[1]-tmp_list[0]
+
+            ax = axes[2,iD]
+            sns.barplot(np.arange(K+1),su_diff,palette=color_palette,ax=ax)
+            ax.set_title('Success - Failure')
+            ax.set_xlabel('State j'); ax.set_ylabel('State i') 
+        if SAVEFIG:
+            pdfdoc.savefig(fig)
+            plt.close(fig)
+    if SAVEFIG:
+        pdfdoc.close()
+    
+    
+def plot_state_usage_per_mouse(state_usage_pertrial, data_df,
+                               SAVEFIG=False,
+                               PlotDir='./plots',
+                               fname=None):
+    
+    K = state_usage_pertrial.shape[-1] - 1
+    mouseIDs = np.unique(data_df['subject'])
+    conditions = np.unique(data_df['ocular'])
+    distances = np.unique(data_df['distance'])
+
+    if SAVEFIG:
+        if fname is None:
+            'state-usages-per-mouse_K-{}.pdf'.format(K)
+        #Create pdf to save all plots
+        pdfdoc = PdfPages(os.path.join(PlotDir,fname))      
+    
+    #Get trial indices 
+    indy_dict = data_df.groupby(['subject','ocular','distance','success']).indices
+
+    #Loop over each mouse, since mice may have different behaviors
+    for mID in mouseIDs:
+        #Loop over each condition
+        for cond in conditions:
+
+            fig, axes = plt.subplots(3,5,figsize=(20,10),sharey=True,gridspec_kw={'width_ratios':[4,4,4,4,4],'wspace':0.5,'hspace':0.5})
+            plt.suptitle('Mouse {}, {} condition -> State Usage'.format(mID,cond),y=0.95)
+
+            diff_list = []
+            #Loop over each distance
+            for iD,dist in enumerate(distances):
+                tmp_list = []
+
+                #And outcome
+                for success in [0,1]:
+                    if (mID,cond,dist,success) not in indy_dict.keys():
+                        ax = axes[success,iD]
+                        ax.set_title('{} / {} / {}'.format(success,dist,len(trial_indices)))
+                        ax.axis('off')
+                        continue
+
+                    #Get indices for this unique trial combination
+                    trial_indices = indy_dict[(mID,cond,dist,success)]
+
+                    #Sum all transitions from all mice
+                    su_uniq = np.sum(state_usage_pertrial[trial_indices],axis=0)
+                    #Normalize based on # of bins
+                    su_uniq = su_uniq/np.sum(su_uniq)
+                    #Save to calculate difference
+                    tmp_list.append(np.copy(su_uniq))
+
+                    #Plot empirical transition matrix
+                    ax = axes[success,iD]
+                    sns.barplot(np.arange(K+1),su_uniq,palette=color_palette,ax=ax)
+
+                    ax.set_title('S:{} / D:{} / N:{}'.format(success,dist,len(trial_indices)))
+                    ax.set_xlabel('State j'); ax.set_ylabel('State i')
+
+                if len(tmp_list) < 2:
+                    ax = axes[2,iD]
+                    ax.axis('off')
+                    diff_list.append([])
+                    continue
+                else:
+                    su_diff = tmp_list[1]-tmp_list[0]
+
+                ax = axes[2,iD]
+                sns.barplot(np.arange(K+1),su_diff,palette=color_palette,ax=ax)
+                ax.set_title('Success - Failure')
+                ax.set_xlabel('State j'); ax.set_ylabel('State i') 
+            if SAVEFIG:
+                pdfdoc.savefig(fig)
+                plt.close(fig)
+    if SAVEFIG:
+        pdfdoc.close()

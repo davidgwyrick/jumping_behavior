@@ -73,7 +73,7 @@ def decode_labels(X,Y,train_index,test_index,classifier='LDA',clabels=None,X_tes
     if classifier == 'LDA':
         clf = LinearDiscriminantAnalysis()
     elif classifier == 'SVM':
-        clf = svm.LinearSVC(max_iter=1E6)
+        clf = svm.LinearSVC(penalty='l1',max_iter=1E6)
     elif classifier ==  'MLP':
         clf = MLPClassifier(alpha=0.01, max_iter=10000)
 
