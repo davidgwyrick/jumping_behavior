@@ -63,9 +63,9 @@ parser.add_argument('--inputdriven', type=bool, default=0,
                     help='HMM transitions dependent on some input in addition to previous HMM state')
 
 ##===== Model Parameters =====##
-parser.add_argument('--Kmin', type=int, default=12,
+parser.add_argument('--Kmin', type=int, default=6,
                     help='minimum number of HMM states')
-parser.add_argument('--Kmax', type=int, default=12,
+parser.add_argument('--Kmax', type=int, default=16,
                     help='maximum number of HMM states')
 parser.add_argument('--kappa', type=float, default=1e4,
                     help='sticky arhmm kappa')
@@ -83,7 +83,7 @@ parser.add_argument('--xval_type', type=str, default='K',
                     help='What is the model cross-validating over')
 parser.add_argument('--kXval', type=int, default=2,
                     help='number of kfold; if set to 0, script will loop over Ks and just fit the model to all of the data')
-parser.add_argument('--max_processes', type=int, default=15,
+parser.add_argument('--max_processes', type=int, default=7,
                     help='max # of parallel processes to run')
 args = parser.parse_args()
 
