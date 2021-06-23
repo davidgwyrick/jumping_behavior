@@ -25,9 +25,10 @@ plt.rcParams['figure.titleweight'] = 'bold'
 plt.rcParams['axes.titleweight'] = 'bold'
 plt.rcParams['xtick.major.pad']='10'
 
-color_names=['windows blue','red','amber','faded green','dusty purple','orange','steel blue','pink',
-             'greyish','mint','clay','light cyan','forest green','pastel purple','salmon','dark brown',
-             'lavender','pale green','dark red','gold','dark teal','rust','fuchsia','pale orange','cobalt blue']
+color_names=['windows blue','red','amber','faded green','dusty purple','orange','steel blue','pink','mint',
+             'clay','light cyan','forest green','pastel purple','salmon','dark brown','lavender','pale green',
+             'dark red','gold','dark teal','rust','fuchsia','pale orange','cobalt blue','mahogany','cloudy blue',
+             'dark pastel green','dust','electric lime','fresh green','light eggplant','nasty green','greyish']
 color_palette = sns.xkcd_palette(color_names)
 cc = sns.xkcd_palette(color_names)
 
@@ -73,7 +74,7 @@ def decode_labels(X,Y,train_index,test_index,classifier='LDA',clabels=None,X_tes
     if classifier == 'LDA':
         clf = LinearDiscriminantAnalysis()
     elif classifier == 'SVM':
-        clf = svm.LinearSVC(penalty='l1',max_iter=1E6)
+        clf = svm.LinearSVC(penalty='l1',dual=False,max_iter=1E6)
     elif classifier ==  'MLP':
         clf = MLPClassifier(alpha=0.01, max_iter=10000)
 
@@ -96,20 +97,8 @@ def decode_labels(X,Y,train_index,test_index,classifier='LDA',clabels=None,X_tes
                 #Predict test data by taking the maximum correlation between the test population vector and training PSTHs
                 Rs = [np.corrcoef(PSTH_train[iStim],X_test[iTrial])[0,1] for iStim in range(nClasses)]
                 Y_hat[iTrial] =  class_labels[np.argmax(Rs)]
+
                 
-            #Just to check whether the classifier correctly decodes the training data
-#         nTrials_train = X_train.shape[0]
-#         Y_hat_train = np.zeros((nTrials_train,),dtype=int)
-#         for iTrial in range(nTrials_train):
-#             if classifier == 'Euclidean_Dist':
-#                 #Predict test data by taking the minimum euclidean distance
-#                 dist = [np.sum((X_train[iTrial] - PSTH_train[iStim])**2) for iStim in range(nClasses)]
-#                 Y_hat_train[iTrial] =  class_labels[np.argmin(dist)]
-#             else:
-#                 #Predict test data by taking the maximum correlation between the test population vector and training PSTHs
-#                 Rs = [np.corrcoef(PSTH_train[iStim],X_train[iTrial])[0,1] for iStim in range(nClasses)]
-#                 Y_hat_train[iTrial] =  class_labels[np.argmax(Rs)]
-#         pdb.set_trace()
     #All other classifiers
     else:
         #Fit model to the training data
@@ -118,6 +107,9 @@ def decode_labels(X,Y,train_index,test_index,classifier='LDA',clabels=None,X_tes
         #Predict test data
         Y_hat = clf.predict(X_test)
         Y_hat_train = clf.predict(X_train)
+        
+        #Get weights
+        decoding_weights = clf.coef_
     
     #Calculate confusion matrix
     kfold_hits = confusion_matrix(Y_test,Y_hat,labels=clabels)
@@ -126,9 +118,12 @@ def decode_labels(X,Y,train_index,test_index,classifier='LDA',clabels=None,X_tes
 #     coef = clf.coef_
 #     pdb.set_trace()
 
+    nPredictors = decoding_weights.shape[1]
     ##===== Perform Shuffle decoding =====##
     if shuffle:
         kfold_shf = np.zeros((nShuffles,nClasses,nClasses))
+        decoding_weights_shf = np.zeros((nShuffles,nPredictors))
+        
         #Classify with shuffled dataset
         for iS in range(nShuffles):
             #Shuffle training indices
@@ -139,7 +134,7 @@ def decode_labels(X,Y,train_index,test_index,classifier='LDA',clabels=None,X_tes
             if classifier == 'LDA':
                 clf_shf = LinearDiscriminantAnalysis()
             elif classifier == 'SVM':
-                clf_shf = svm.LinearSVC(max_iter=1E6) #C=classifier_kws['C']
+                clf_shf = svm.LinearSVC(penalty='l1',dual=False,max_iter=1E6) #C=classifier_kws['C']
             elif classifier ==  'MLP':
                 clf_shf = MLPClassifier(alpha=0.01, max_iter=10000)
             
@@ -171,18 +166,31 @@ def decode_labels(X,Y,train_index,test_index,classifier='LDA',clabels=None,X_tes
 
                 #Predict test data
                 Y_hat = clf_shf.predict(X_test)
+                
+                #Get weights
+                decoding_weights_shf[iS] = clf_shf.coef_
 
             #Calculate confusion matrix
             kfold_shf[iS] = confusion_matrix(Y_test,Y_hat,labels=clabels)
+            
+            #Calculate z-score of decoding weights
+        decoding_weights_m_shf = np.mean(decoding_weights_shf,axis=0)
+        decoding_weights_s_shf = np.std(decoding_weights_shf,axis=0)
+        
+        decoding_weights_z = np.divide(decoding_weights - decoding_weights_m_shf, decoding_weights_s_shf, out = np.zeros(decoding_weights.shape,dtype=np.float32),where = decoding_weights_s_shf!=0)
+        
+
     else:
         kfold_shf = np.zeros((nClasses,nClasses))
 
         #Return decoding results
-    return kfold_hits, kfold_shf
+    return kfold_hits, kfold_shf, decoding_weights, decoding_weights_m_shf, decoding_weights_z
 
 def calculate_accuracy(results,method='L1O',plot_shuffle=False,pdfdoc=None):
     
     nClasses = results[0][0].shape[0]
+#     nPredictors = results[0][2].shape[1]
+#     K = int(np.sqrt(nPredictors))
     #Save results to these
     confusion_mat = np.zeros((nClasses,nClasses))
     confusion_shf = np.zeros((nClasses,nClasses))
@@ -190,6 +198,7 @@ def calculate_accuracy(results,method='L1O',plot_shuffle=False,pdfdoc=None):
     
     if method == 'L1O':    
         c_shf = np.zeros((nShuffles,nClasses,nClasses))
+        
         for iK,rTuple in enumerate(results):
             loo_hits = rTuple[0] #size [nClasses x nClasses]
             loo_shf = rTuple[1]  #size [nShuffles,nClasses x nClasses]
@@ -204,7 +213,7 @@ def calculate_accuracy(results,method='L1O',plot_shuffle=False,pdfdoc=None):
 
         #Calculate decoding accuracy for this leave-1-out x-validation
         confusion_mat = confusion_mat/np.sum(confusion_mat,axis=1).reshape(-1,1)
-
+        
         #Loop through shuffles
         for iS in range(nShuffles):
             #Calculate shuffled decoding accuracy for this leave-1-out shuffle
@@ -217,11 +226,12 @@ def calculate_accuracy(results,method='L1O',plot_shuffle=False,pdfdoc=None):
 
         #Get signficance of decoding 
         pvalues_loo = st.norm.sf(confusion_z)
-        
+   
         if plot_shuffle:
             #Plot shuffle distributions
             title = 'Leave-1-Out Cross-Validation'
             plot_decoding_shuffle(confusion_mat, c_shf, pvalues_loo, title,pdfdoc)
+            
             
     elif method == 'kfold':       
         kfold_accuracies = []
@@ -288,10 +298,7 @@ def cross_validate(X,Y,Y_sort=None,method='L1O',nKfold=10,classifier='LDA',class
     results = []
     
     ##===== Loop over cross-validation =====##
-    for iK, (train_index, test_index) in enumerate(k_fold.split(X,Y_sort)):
-#         print(np.unique(Y[train_index],return_counts=True))
-#         print(np.unique(Y_sort[train_index],return_counts=True))
-#         pdb.set_trace()
+    for iK, (train_index, test_index) in enumerate(k_fold.split(X,Y)):
         if parallel:
             processes.append(pool.apply_async(decode_labels,args=(X,Y,train_index,test_index,classifier,clabels,X_test,shuffle,classifier_kws)))
         else:
@@ -303,10 +310,42 @@ def cross_validate(X,Y,Y_sort=None,method='L1O',nKfold=10,classifier='LDA',class
         results = [p.get() for p in processes]
         pool.close()
         
+    nPredictors = X.shape[1]
+    K = int(np.sqrt(nPredictors))
+    
+    nModel_fits = len(results)
+    decoding_weights = np.zeros((nModel_fits,K,K))
+    decoding_weights_shf = np.zeros((nModel_fits,K,K))
+    decoding_weights_z = np.zeros((nModel_fits,K,K))
+    
+    for iK,rTuple in enumerate(results):
+        dw = rTuple[2] #size [K**2]
+        dw_shf = rTuple[3] 
+        dw_z = rTuple[4] 
+        
+        decoding_weights[iK] = dw.reshape((K,K))
+        decoding_weights_shf[iK] = dw_shf.reshape((K,K))
+        decoding_weights_z[iK] = dw_z.reshape((K,K))
+
+    decoding_weights = np.mean(decoding_weights,axis=0)
+#     decoding_weights_shf = np.mean(decoding_weights_shf,axis=0)
+#     #If we did leave-1-out cross-validation, for significance, take the minimum pvalue from each L1O "fold"
+#     if method == 'L1O':
+#         decoding_weights_pvalues = np.zeros(decoding_weights_z.shape)
+#         for iK in range(nModel_fits):
+#             decoding_weights_pvalues[iK] = st.norm.sf(decoding_weights_z[iK])
+#         decoding_weights_pvalues = np.min(decoding_weights_pvalues,axis=0)
+        
+#     #Else, for kfold, take the mean z-score and find the survival fraction
+#     else:
+
+    decoding_weights_z = np.mean(decoding_weights_z,axis=0)
+    decoding_weights_pvalues = st.norm.sf(decoding_weights_z)
+    
     ##===== Calculate decoding accuracy =====##
     confusion_mat, confusion_shf, confusion_z = calculate_accuracy(results,method,plot_shuffle,pdfdoc)
     
-    return confusion_mat, confusion_shf, confusion_z
+    return confusion_mat, confusion_shf, confusion_z, decoding_weights, decoding_weights_z,decoding_weights_pvalues
 
 
 ##==============================##
@@ -391,7 +430,7 @@ def plot_confusion_matrices(confusion_mat, confusion_z, plot_titles=None,class_l
         pdfdoc.savefig(fig)
         plt.close(fig)
     
-def plot_decoding_accuracy(confusion_mat,confusion_z,ax=None,block='randomized_ctrl',class_labels=None,title=None,annot=True,clims=None):
+def plot_decoding_accuracy(confusion_mat,confusion_z,ax=None,block='randomized_ctrl',class_labels=None,title=None,annot=True,clims=None,cmap=None):
     #Plot decoding performance
     if ax is None:
         fig,ax = plt.subplots(figsize=(6,6))#,
@@ -399,21 +438,31 @@ def plot_decoding_accuracy(confusion_mat,confusion_z,ax=None,block='randomized_c
     if title is not None:
         ax.set_title(title,fontsize=14)
 
-    pvalues = st.norm.sf(confusion_z)
+    
     
     if clims is None:
         clims = [np.percentile(confusion_mat,1) % 0.05, np.percentile(confusion_mat,99) - np.percentile(confusion_mat,99) % 0.05]
     #Plot actual decoding performance
-    sns.heatmap(confusion_mat,annot=annot,fmt='.2f',annot_kws={'fontsize': 16},cbar=True,square=True,vmin=clims[0],vmax=clims[1],cbar_kws={'shrink': 0.5},ax=ax)
+    sns.heatmap(confusion_mat,annot=annot,fmt='.2f',annot_kws={'fontsize': 16},cmap=cmap,cbar=True,square=True,vmin=clims[0],vmax=clims[1],cbar_kws={'shrink': 0.5,'label':'accuracy'},ax=ax)
 
-    nClasses = confusion_mat.shape[0] 
-    for i in range(nClasses):
-        for j in range(nClasses):
-            if (pvalues[i,j] < 0.05):
-                ax.text(j+0.65,i+0.35,'*',color='g',fontsize=20,fontweight='bold')
+#     nClasses = confusion_mat.shape[0] 
+#     for i in range(nClasses):
+#         for j in range(nClasses):
+#             if (pvalues[i,j] < 0.05):
+#                 ax.text(j+0.65,i+0.35,'*',color='g',fontsize=20,fontweight='bold')
+        
+    pvalues = st.norm.sf(confusion_z)
+    pval_mask = pvalues < 0.05      
+    x = np.linspace(0, pval_mask.shape[0]-1, pval_mask.shape[0])+0.5
+    y = np.linspace(0, pval_mask.shape[1]-1, pval_mask.shape[1])+0.5
+    X, Y = np.meshgrid(x, y)
+    ax.scatter(X,Y,marker='*',s=30*pval_mask, c=cc[-1])
+        
     #Labels
-    ax.set_ylabel('Actual Mouse',fontsize=14)
-    ax.set_xlabel('Decoded Mouse',fontsize=14)
+    ax.set_ylabel('Actual',fontsize=14)
+    ax.set_xlabel('Decoded',fontsize=14)
     if class_labels is not None:
-        ax.set_yticklabels(class_labels,va="center",rotation=45,fontsize=14)
-        ax.set_xticklabels(class_labels,va="center",rotation=45,fontsize=14) 
+        ax.set_yticks(np.arange(len(class_labels))+0.5)
+        ax.set_xticks(np.arange(len(class_labels))+0.5)
+        ax.set_yticklabels(class_labels,va="center",rotation=90,fontsize=14)
+        ax.set_xticklabels(class_labels,va="center",rotation=0,fontsize=14) 

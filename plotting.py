@@ -582,17 +582,18 @@ def plot_example_state_sequences(trMAPs, trMasks, data_list, K,
     if SAVEFIG:
         pdfdoc.close()
         
-def plot_transition_probability_matrix(TPM, pdfdoc=None):
+def plot_transition_probability_matrix(TPM, ax=None, pdfdoc=None):
     K = TPM.shape[-1]
     #Create masks for diagonal
     diag_mask = np.ones((K,K),dtype=bool)
     diag_mask[np.diag_indices(K)] = False
     
-    fig, ax = plt.subplots(figsize=(8,8))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8,8))
     #Plot annoted probabilites for diagonal, but based colormap on off-diagonals
-    sns.heatmap(TPM,ax=ax,mask=diag_mask,square=True,annot=True,fmt='.2f',cbar=False,
-                cmap='rocket_r',vmax=np.max(TPM[diag_mask]),vmin=np.max(TPM[diag_mask]))
-    sns.heatmap(TPM,ax=ax,mask=~diag_mask,annot=False,square=True,cbar_kws={'shrink':0.5})
+#     sns.heatmap(TPM,ax=ax,mask=diag_mask,square=True,annot=True,fmt='.2f',cbar=False,
+#                 cmap='rocket_r',vmax=np.max(TPM[diag_mask]),vmin=np.max(TPM[diag_mask]))
+    sns.heatmap(TPM,ax=ax,mask=~diag_mask,annot=True,square=True,cbar_kws={'shrink':0.5})
 
     ax.set_title('Transition Probability Matrix')
     ax.set_xlabel('State j'); ax.set_ylabel('State i')

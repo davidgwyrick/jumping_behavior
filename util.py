@@ -22,7 +22,8 @@ import matplotlib.lines as mlines
 from matplotlib.backends.backend_pdf import PdfPages
 ResultsDir = '/home/dwyrick/projects/jumping_behavior/results'
 
-def read_data(fpath='./data/jumping_data_102220.h5', dsf=1):
+
+def read_data(fpath='./data/jumping_data_102220.h5', dsf=1, cut=5, last5=True):
     
     ##===== Read in Data =====##
     data_df = pd.read_hdf(fpath)
@@ -53,8 +54,13 @@ def read_data(fpath='./data/jumping_data_102220.h5', dsf=1):
             ll_list.append((mask,mask))
 
         #Downsample if required #data_list_fullres.append(tmp)
-        tmp = np.vstack(xy_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[:-1:dsf,:]; data_list.append(tmp2)
-        tmp = np.vstack(ll_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[:-1:dsf,:]; mask_list.append(tmp2)
+        if last5:
+            tmp = np.vstack(xy_list)[:,2:-2][:,-60*cut:-1].T; tmp2 = tmp if dsf == 1 else tmp[::dsf,:]; data_list.append(tmp2)
+            tmp = np.vstack(ll_list)[:,2:-2][:,-60*cut:-1].T; tmp2 = tmp if dsf == 1 else tmp[::dsf,:]; mask_list.append(tmp2)
+        else:
+            
+            tmp = np.vstack(xy_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[:-1:dsf,:]; data_list.append(tmp2)
+            tmp = np.vstack(ll_list)[:,2:-2].T; tmp2 = tmp if dsf == 1 else tmp[:-1:dsf,:]; mask_list.append(tmp2)
         
     return data_list, mask_list, data_df
     
@@ -286,7 +292,7 @@ def get_state_durations(trMAPs, trMasks, K, trial_indices=None):
 
     return (state_duration_list, state_startend_list, mean_state_durations, state_usage_pertrial, state_usage)
 
-def get_transition_count_matrices(trMAPs, trMasks, K, normalize=True):
+def get_transition_count_matrices(trMAPs, trMasks, K, normalize=True,lexical=True):
     ## Create 'Transition' count matrix for each trial from sparse MAP state sequence
     TCMs = np.zeros((len(trMAPs),K,K))
    
@@ -306,9 +312,17 @@ def get_transition_count_matrices(trMAPs, trMasks, K, normalize=True):
         #Count 'state transitons' and fill matrix
         prev_state = sMAP[0]
         for iT,state in enumerate(sMAP):
-            TCMs[iTrial,prev_state,state]+=1
-            prev_state = state
+            #Create "Lexical transition matrix" 
+            if lexical:
 
+                if prev_state!=state:
+                    TCMs[iTrial,prev_state,state]+=1
+                    prev_state = state
+            #Or regular transition matrix
+            else:
+                TCMs[iTrial,prev_state,state]+=1
+                prev_state = state
+            
         if normalize:
             TCMs[iTrial] = TCMs[iTrial]/np.sum(TCMs[iTrial])
         
