@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.lines as mlines
 from matplotlib.backends.backend_pdf import PdfPages
-ResultsDir = '/home/dwyrick/projects/jumping_behavior/results'
+ResultsDir = '/home/eabe/Research/Jumping/ARHMM/results'
 
 
 def read_data(fpath='./data/jumping_data_102220.h5', dsf=1, cut=5, last5=True):

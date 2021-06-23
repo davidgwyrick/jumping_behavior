@@ -34,8 +34,8 @@ import plotting as usrplt
 behav_dict = {-1:'ambiguous', 0:'rest',1:'running'}
 
 #Directories
-RootDataDir = '/home/dwyrick/projects/jumping_behavior/data'
-ResultsDir = '/home/dwyrick/projects/jumping_behavior/results'
+RootDataDir = '/home/eabe/Research/Jumping/ARHMM/data'
+ResultsDir = '/home/eabe/Research/Jumping/ARHMM/results'
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -67,7 +67,7 @@ parser.add_argument('--Kmin', type=int, default=6,
                     help='minimum number of HMM states')
 parser.add_argument('--Kmax', type=int, default=16,
                     help='maximum number of HMM states')
-parser.add_argument('--kappa', type=float, default=1e7,
+parser.add_argument('--kappa', type=float, default=1e4,
                     help='sticky arhmm kappa')
 parser.add_argument('--AR_lags', type=int, default=1,
                     help='Autoregressive lags')
@@ -83,7 +83,7 @@ parser.add_argument('--xval_type', type=str, default='K',
                     help='What is the model cross-validating over')
 parser.add_argument('--kXval', type=int, default=2,
                     help='number of kfold; if set to 0, script will loop over Ks and just fit the model to all of the data')
-parser.add_argument('--max_processes', type=int, default=15,
+parser.add_argument('--max_processes', type=int, default=7,
                     help='max # of parallel processes to run')
 args = parser.parse_args()
 
@@ -235,7 +235,7 @@ def fit_ssm_get_llhood(data_list, K, opt, kappa=1E2, train_inds=None, test_inds=
                     'model_convergence': model_convergence, 'RunTime': RunTime}) 
     
     ## Calculate state duration and state usage 
-    state_duration_list, state_startend_list, mean_state_durations, state_usage = util.get_state_durations(trMAPs, trMasks, K)
+    state_duration_list, state_startend_list, mean_state_durations, state_usage_pertrial, state_usage = util.get_state_durations(trMAPs, trMasks, K)
         
     ## Plot example trajectories of actual trajectories for each state
     usrplt.plot_example_trajectories(state_duration_list, state_startend_list, mean_state_durations, data_test, arhmm, dsf=opt['downsample_factor'],
@@ -318,7 +318,9 @@ if __name__ == "__main__":
             
     ##====== ============ ======##
     ##====== Read in Data ======##
-    data_df = pd.read_hdf('./data/jumping_data_102220.h5')
+    data_df1 = pd.read_hdf(os.path.join(RootDataDir,'jumping_data_102220.h5'))
+    data_df2 = pd.read_hdf(os.path.join(RootDataDir,'jumping_data_RIS_030921.h5'))
+    data_df = pd.concat((data_df1,data_df2)).reset_index()
     nTrials = len(data_df)
     
     #DLC tracking confidence threshold at which to mask out data
